@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 import os
 import sys
-import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Dict
 import requests
 from bs4 import BeautifulSoup
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+import time
 
 # Environment variables
 GMAIL_USER = os.getenv('GMAIL_USER')
@@ -21,152 +21,133 @@ class NewsCollector:
         self.macro_news = []
         self.today = datetime.now().strftime('%Y-%m-%d')
         self.headers = {
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         }
     
     def fetch_semiconductor_news(self) -> List[Dict]:
-        """Fetch semiconductor industry news from multiple sources"""
+        """Fetch semiconductor news from Yonhap news"""
         articles = []
-        
-        # Source 1: RSS feed from tech news
         try:
-            response = requests.get(
-                'https://feeds.bloomberg.com/markets/news.rss',
-                headers=self.headers,
-                timeout=10
-            )
-            soup = BeautifulSoup(response.content, 'xml')
-            items = soup.find_all('item', limit=5)
+            # Yonhap news - Semiconductor category
+            url = 'https://www.yna.co.kr/search/index?query=semiconductor&date='
+            response = requests.get(url, headers=self.headers, timeout=10)
+            response.encoding = 'utf-8'
+            soup = BeautifulSoup(response.content, 'html.parser')
             
+            # Find news items
+            items = soup.find_all('a', {'class': 'search-news-link'})[:5]
             for item in items:
-                title = item.find('title')
-                description = item.find('description')
-                link = item.find('link')
-                pub_date = item.find('pubDate')
-                
-                # Filter for semiconductor-related content
-                if title and ('chip' in title.text.lower() or 'semiconductor' in title.text.lower() or 
-                             'tsmc' in title.text.lower() or 'samsung' in title.text.lower() or
-                             'intel' in title.text.lower()):
-                    articles.append({
-                        'title': title.text[:100] if title else 'N/A',
-                        'url': link.text if link else '#',
-                        'source': 'Bloomberg',
-                        'date': self.today,
-                        'category': 'Semiconductor',
-                        'description': description.text[:200] if description else ''
-                    })
+                title_elem = item.find('strong')
+                if title_elem:
+                    title = title_elem.get_text(strip=True)
+                    link = item.get('href', '')
+                    if title and link:
+                        articles.append({
+                            'title': title[:120],
+                            'url': 'https://www.yna.co.kr' + link if not link.startswith('http') else link,
+                            'source': 'Yonhap News',
+                            'date': self.today,
+                            'category': 'Semiconductor'
+                        })
         except Exception as e:
-            print(f"Error fetching from Bloomberg: {e}")
+            print(f"Error fetching from Yonhap: {e}")
         
-        # Source 2: Tech Crunch-like content
-        try:
-            response = requests.get(
-                'https://feeds.engadget.com/webfeeds/rss2/gadgets/',
-                headers=self.headers,
-                timeout=10
-            )
-            soup = BeautifulSoup(response.content, 'xml')
-            items = soup.find_all('item', limit=5)
-            
-            for item in items:
-                title = item.find('title')
-                description = item.find('description')
-                link = item.find('link')
+        # Fallback: Try Naver news
+        if len(articles) < 2:
+            try:
+                url = 'https://search.naver.com/search.naver?where=news&query=semiconductor&sort=1'
+                response = requests.get(url, headers=self.headers, timeout=10)
+                response.encoding = 'utf-8'
+                soup = BeautifulSoup(response.content, 'html.parser')
                 
-                if title and ('chip' in title.text.lower() or 'semiconductor' in title.text.lower()):
-                    articles.append({
-                        'title': title.text[:100] if title else 'N/A',
-                        'url': link.text if link else '#',
-                        'source': 'Engadget',
-                        'date': self.today,
-                        'category': 'Semiconductor',
-                        'description': description.text[:200] if description else ''
-                    })
-        except Exception as e:
-            print(f"Error fetching from Engadget: {e}")
+                # Find news items in Naver
+                items = soup.find_all('a', {'class': 'news_tit'})[:3]
+                for item in items:
+                    title = item.get_text(strip=True)
+                    link = item.get('href', '')
+                    if title and 'semiconductor' in title.lower():
+                        articles.append({
+                            'title': title[:120],
+                            'url': link,
+                            'source': 'Naver News',
+                            'date': self.today,
+                            'category': 'Semiconductor'
+                        })
+            except Exception as e:
+                print(f"Error fetching from Naver: {e}")
         
-        # If we don't have enough articles from feeds, add placeholder
+        # If still no articles, add placeholder
         if len(articles) == 0:
-            articles = [{
-                'title': '[업데이트 대기 중] 반도체 산업 뉴스',
+            articles.append({
+                'title': '반도체 산업 최신 뉴스를 준비 중입니다',
                 'url': '#',
                 'source': 'News Feed',
                 'date': self.today,
-                'category': 'Semiconductor',
-                'description': '현재 피드에서 반도체 관련 뉴스를 수집 중입니다.'
-            }]
+                'category': 'Semiconductor'
+            })
         
         return articles[:5]
     
     def fetch_macro_news(self) -> List[Dict]:
-        """Fetch macroeconomy news from multiple sources"""
+        """Fetch macroeconomy news from Yonhap news"""
         articles = []
-        
-        # Source 1: Bloomberg Economics
         try:
-            response = requests.get(
-                'https://feeds.bloomberg.com/markets/news.rss',
-                headers=self.headers,
-                timeout=10
-            )
-            soup = BeautifulSoup(response.content, 'xml')
-            items = soup.find_all('item', limit=5)
+            # Yonhap news - Economy category
+            url = 'https://www.yna.co.kr/search/index?query=economy&date='
+            response = requests.get(url, headers=self.headers, timeout=10)
+            response.encoding = 'utf-8'
+            soup = BeautifulSoup(response.content, 'html.parser')
             
+            # Find news items
+            items = soup.find_all('a', {'class': 'search-news-link'})[:5]
             for item in items:
-                title = item.find('title')
-                description = item.find('description')
-                link = item.find('link')
-                
-                if title and any(keyword in title.text.lower() for keyword in 
-                               ['economy', 'interest rate', 'inflation', 'market', 'fed', 'gdp', '금리', '경제']):
-                    articles.append({
-                        'title': title.text[:100] if title else 'N/A',
-                        'url': link.text if link else '#',
-                        'source': 'Bloomberg',
-                        'date': self.today,
-                        'category': 'Macroeconomy',
-                        'description': description.text[:200] if description else ''
-                    })
+                title_elem = item.find('strong')
+                if title_elem:
+                    title = title_elem.get_text(strip=True)
+                    link = item.get('href', '')
+                    if title and link:
+                        articles.append({
+                            'title': title[:120],
+                            'url': 'https://www.yna.co.kr' + link if not link.startswith('http') else link,
+                            'source': 'Yonhap News',
+                            'date': self.today,
+                            'category': 'Macroeconomy'
+                        })
         except Exception as e:
-            print(f"Error fetching macroeconomy news: {e}")
+            print(f"Error fetching macro news from Yonhap: {e}")
         
-        # Source 2: Reuters
-        try:
-            response = requests.get(
-                'https://feeds.reuters.com/finance/markets',
-                headers=self.headers,
-                timeout=10
-            )
-            soup = BeautifulSoup(response.content, 'xml')
-            items = soup.find_all('item', limit=5)
-            
-            for item in items:
-                title = item.find('title')
-                description = item.find('description')
-                link = item.find('link')
+        # Fallback: Try Naver news
+        if len(articles) < 2:
+            try:
+                url = 'https://search.naver.com/search.naver?where=news&query=economy&sort=1'
+                response = requests.get(url, headers=self.headers, timeout=10)
+                response.encoding = 'utf-8'
+                soup = BeautifulSoup(response.content, 'html.parser')
                 
-                articles.append({
-                    'title': title.text[:100] if title else 'N/A',
-                    'url': link.text if link else '#',
-                    'source': 'Reuters',
-                    'date': self.today,
-                    'category': 'Macroeconomy',
-                    'description': description.text[:200] if description else ''
-                })
-        except Exception as e:
-            print(f"Error fetching from Reuters: {e}")
+                items = soup.find_all('a', {'class': 'news_tit'})[:3]
+                for item in items:
+                    title = item.get_text(strip=True)
+                    link = item.get('href', '')
+                    if title:
+                        articles.append({
+                            'title': title[:120],
+                            'url': link,
+                            'source': 'Naver News',
+                            'date': self.today,
+                            'category': 'Macroeconomy'
+                        })
+            except Exception as e:
+                print(f"Error fetching from Naver: {e}")
         
-        # If we don't have enough articles, add placeholder
+        # If still no articles, add placeholder
         if len(articles) == 0:
-            articles = [{
-                'title': '[업데이트 대기 중] 거시 경제 뉴스',
+            articles.append({
+                'title': '경제 뉴스를 준비 중입니다',
                 'url': '#',
                 'source': 'News Feed',
                 'date': self.today,
-                'category': 'Macroeconomy',
-                'description': '현재 피드에서 거시 경제 관련 뉴스를 수집 중입니다.'
-            }]
+                'category': 'Macroeconomy'
+            })
         
         return articles[:5]
     
@@ -174,6 +155,7 @@ class NewsCollector:
         """Collect news from all sources"""
         print(f"Collecting news for {self.today}...")
         self.semiconductor_news = self.fetch_semiconductor_news()
+        time.sleep(1)  # Be polite to servers
         self.macro_news = self.fetch_macro_news()
         print(f"Collected {len(self.semiconductor_news)} semiconductor articles")
         print(f"Collected {len(self.macro_news)} macroeconomy articles")
@@ -204,41 +186,50 @@ class EmailSender:
     
     def create_email_body(self, semiconductor_news: List[Dict], macro_news: List[Dict], today: str) -> str:
         """Create HTML email body with news articles"""
-        html = f"""<html><head><meta charset="UTF-8"></head><body style="font-family: Arial, sans-serif;">
-        <h1 style="color: #1e88e5;">📰 Daily News Summary - {today}</h1>
-        <h2 style="color: #0d47a1; border-bottom: 3px solid #1e88e5; padding-bottom: 10px;">🔧 Semiconductor Sector</h2>"""
+        html = f"""<html><head><meta charset="UTF-8"></head><body style="font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto;">
+        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; border-radius: 10px; color: white; text-align: center;">
+            <h1 style="margin: 0; font-size: 28px;">📰 일일 뉴스 요약</h1>
+            <p style="margin: 10px 0 0 0; font-size: 14px; opacity: 0.9;">{today}</p>
+        </div>
         
-        for i, article in enumerate(semiconductor_news, 1):
-            html += f"""<div style="margin: 15px 0; padding: 12px; background-color: #f5f5f5; border-left: 4px solid #1e88e5; border-radius: 4px;">
-            <p style="margin: 5px 0;"><strong style="font-size: 14px;">{i}. {article['title']}</strong></p>
-            <p style="font-size: 12px; color: #666; margin: 5px 0;">
-                📅 {article['date']} | 📌 {article['source']}
-            </p>"""
-            if article.get('description'):
-                html += f"<p style="font-size: 13px; color: #333; margin: 8px 0;">{article['description']}</p>"
-            if article['url'] != '#':
-                html += f"<p style="margin: 8px 0;"><a href=\"{article['url']}\" style="color: #1e88e5; text-decoration: none;">➡️ Read full article</a></p>"
-            html += "</div>"
+        <div style="margin-top: 30px;">
+            <h2 style="color: #667eea; border-bottom: 3px solid #667eea; padding-bottom: 10px; margin-bottom: 20px;">🔧 반도체 산업</h2>"""
         
-        html += """<h2 style="color: #0d47a1; border-bottom: 3px solid #1e88e5; padding-bottom: 10px; margin-top: 30px;">📊 Macroeconomy</h2>"""
+        if semiconductor_news:
+            for i, article in enumerate(semiconductor_news, 1):
+                html += f"""<div style="margin-bottom: 20px; padding: 15px; background-color: #f8f9ff; border-left: 4px solid #667eea; border-radius: 5px;">
+                <p style="margin: 0 0 8px 0; font-weight: bold; font-size: 15px; color: #333;">{i}. {article['title']}</p>
+                <p style="margin: 8px 0 10px 0; font-size: 12px; color: #666; line-height: 1.5;">
+                    📅 {article['date']} | 📰 {article['source']}
+                </p>"""
+                if article['url'] != '#':
+                    html += f"<p style="margin: 0;"><a href=\"{article['url']}\" style="color: #667eea; text-decoration: none; font-weight: bold;">전체 기사 읽기 →</a></p>"
+                html += "</div>"
         
-        for i, article in enumerate(macro_news, 1):
-            html += f"""<div style="margin: 15px 0; padding: 12px; background-color: #f5f5f5; border-left: 4px solid #ffa726; border-radius: 4px;">
-            <p style="margin: 5px 0;"><strong style="font-size: 14px;">{i}. {article['title']}</strong></p>
-            <p style="font-size: 12px; color: #666; margin: 5px 0;">
-                📅 {article['date']} | 📌 {article['source']}
-            </p>"""
-            if article.get('description'):
-                html += f"<p style="font-size: 13px; color: #333; margin: 8px 0;">{article['description']}</p>"
-            if article['url'] != '#':
-                html += f"<p style="margin: 8px 0;"><a href=\"{article['url']}\" style="color: #ffa726; text-decoration: none;">➡️ Read full article</a></p>"
-            html += "</div>"
+        html += f"""</div>
         
-        html += """<hr style="margin-top: 30px; border: none; border-top: 1px solid #ddd;">
-        <p style="font-size: 11px; color: #999; text-align: center; margin-top: 20px;">
-            ✉️ This email was automatically generated by Daily News Automation System<br>
-            🔄 Sent daily at 7 AM KST
-        </p>
+        <div style="margin-top: 30px;">
+            <h2 style="color: #ff6b6b; border-bottom: 3px solid #ff6b6b; padding-bottom: 10px; margin-bottom: 20px;">📊 거시 경제</h2>"""
+        
+        if macro_news:
+            for i, article in enumerate(macro_news, 1):
+                html += f"""<div style="margin-bottom: 20px; padding: 15px; background-color: #fff8f6; border-left: 4px solid #ff6b6b; border-radius: 5px;">
+                <p style="margin: 0 0 8px 0; font-weight: bold; font-size: 15px; color: #333;">{i}. {article['title']}</p>
+                <p style="margin: 8px 0 10px 0; font-size: 12px; color: #666; line-height: 1.5;">
+                    📅 {article['date']} | 📰 {article['source']}
+                </p>"""
+                if article['url'] != '#':
+                    html += f"<p style="margin: 0;"><a href=\"{article['url']}\" style="color: #ff6b6b; text-decoration: none; font-weight: bold;">전체 기사 읽기 →</a></p>"
+                html += "</div>"
+        
+        html += """</div>
+        
+        <div style="margin-top: 40px; padding: 20px; background-color: #f0f0f0; border-radius: 10px; text-align: center;">
+            <p style="margin: 0; font-size: 12px; color: #666;">
+                ✉️ 이 이메일은 자동으로 생성되었습니다<br>
+                🔄 매일 오전 7시 KST에 전송됩니다
+            </p>
+        </div>
         </body></html>"""
         return html
 
@@ -260,7 +251,7 @@ def main():
             )
             sender.send_email(
                 RECIPIENT_EMAIL,
-                f"Daily News Summary - {collector.today}",
+                f"📰 일일 뉴스 요약 - {collector.today}",
                 email_body
             )
         else:
